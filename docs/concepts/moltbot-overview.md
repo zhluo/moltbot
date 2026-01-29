@@ -1,395 +1,471 @@
 ---
-summary: "Comprehensive overview of Moltbot architecture and end-to-end message flow"
+summary: "Comprehensive overview of Moltbot architecture, capabilities, and how it works"
 read_when:
   - Understanding how Moltbot works
   - Learning the architecture
   - Onboarding new developers
+  - Comparing Moltbot to other AI agents
 ---
-# Moltbot Architecture Overview
+# Moltbot: Complete Overview
 
-This document provides a comprehensive overview of how Moltbot works, including the architecture, key components, and an end-to-end example of message processing.
+## TL;DR
+
+> **Moltbot is an OS-level AI agent with remote channels and autonomy.**
+
+- **OS-Level Agent**: Direct access to filesystem, shell, processes, browser (not screen control)
+- **Remote Channels**: Reachable via WhatsApp, Telegram, Slack, Discord, Voice, Web, CLI
+- **Autonomy**: Acts on its own via cron jobs, heartbeats, and webhooks
+- **Self-Hosted**: Runs on your machine, data stays yours, you just rent the LLM brain
+
+---
+
+## Table of Contents
+
+1. [What is Moltbot?](#what-is-moltbot)
+2. [Architecture Overview](#architecture-overview)
+3. [The Agent Runtime](#the-agent-runtime)
+4. [Tools Available](#tools-available)
+5. [Can It Build Software?](#can-it-build-software)
+6. [Security Model](#security-model)
+7. [Autonomous Capabilities](#autonomous-capabilities)
+8. [How It Differs From Other Agents](#how-it-differs-from-other-agents)
+9. [End-to-End Example](#end-to-end-example)
+10. [Key Source Directories](#key-source-directories)
+
+---
 
 ## What is Moltbot?
 
-**Moltbot** is a personal AI assistant that you run on your own devices. It connects to multiple messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, etc.) and provides a unified AI assistant experience across all of them. The assistant can execute tools, browse the web, manage files, control devices, and more.
+**Moltbot** is a personal AI assistant that:
 
-## High-Level Architecture
+1. **Runs on your own devices** (Mac, Linux, Raspberry Pi, VPS)
+2. **Connects to messaging channels** (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, etc.)
+3. **Has full OS access** (filesystem, shell, browser, network)
+4. **Acts autonomously** (scheduled tasks, webhooks, proactive check-ins)
+5. **Controls multiple devices** (Mac, iOS, Android nodes)
+
+### The One-Liner
+
+```
+Moltbot = OS-Level Agent + Remote Channels + Autonomy + Multi-Device
+```
+
+### The Formula
+
+```
+Cloud Agent = Brain + Interface + Storage (all theirs)
+Moltbot     = Brain (LLM API) + Interface (yours) + Storage (yours) + Actions (yours)
+                    │
+                    └── You just rent the thinking part
+```
+
+---
+
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            MESSAGING CHANNELS                                │
-│  WhatsApp │ Telegram │ Slack │ Discord │ Signal │ iMessage │ WebChat │ ...  │
-└─────────────────────────────────┬───────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              GATEWAY                                         │
-│                    (WebSocket Control Plane)                                 │
-│                    ws://127.0.0.1:18789                                      │
-│                                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │  Channel    │  │   Session   │  │    Agent    │  │   Tools     │         │
-│  │  Manager    │  │   Manager   │  │   Runtime   │  │   Registry  │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
-│                                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │    Cron     │  │   Hooks     │  │   Plugins   │  │   Config    │         │
-│  │  Scheduler  │  │   Engine    │  │   System    │  │   Manager   │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
-└─────────────────────────────────┬───────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CLIENT CONNECTIONS                                 │
-│                                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │  macOS App  │  │    CLI      │  │  WebChat    │  │  iOS/Android│         │
-│  │  (Menu Bar) │  │  Commands   │  │     UI      │  │    Nodes    │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
+│                            REMOTE CHANNELS                                  │
+│    WhatsApp  Telegram  Slack  Discord  Signal  Voice  WebChat  CLI          │
+│        │         │       │       │        │       │       │      │          │
+│        └─────────┴───────┴───────┴────────┴───────┴───────┴──────┘          │
+│                                    │                                        │
+│                                    ▼                                        │
+│                           ┌───────────────┐                                 │
+│                           │    GATEWAY    │  ◄── Always running (daemon)    │
+│                           │    (24/7)     │                                 │
+│                           └───────┬───────┘                                 │
+│                                   │                                         │
+│                    ┌──────────────┼──────────────┐                          │
+│                    ▼              ▼              ▼                          │
+│              ┌──────────┐  ┌──────────┐  ┌──────────┐                       │
+│              │  Agent   │  │  Tools   │  │ Sessions │                       │
+│              │ Runtime  │  │ Registry │  │ Manager  │                       │
+│              └──────────┘  └──────────┘  └──────────┘                       │
+│                                   │                                         │
+│                                   ▼                                         │
+│                         OS-LEVEL ACCESS                                     │
+│    ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐        │
+│    │   File   │ │  Shell   │ │ Process  │ │ Browser  │ │  Nodes   │        │
+│    │  System  │ │ Commands │ │   Mgmt   │ │   CDP    │ │ (Devices)│        │
+│    └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Core Components
+### Core Components
 
-### 1. Gateway (Control Plane)
-
-The **Gateway** is the central hub of Moltbot. It's a long-running process that:
-
-- **Maintains provider connections** to all messaging channels (WhatsApp, Telegram, etc.)
-- **Exposes a WebSocket API** for clients to connect and interact
-- **Routes messages** between channels and the AI agent
-- **Manages sessions** and conversation state
-- **Coordinates tools** and executes agent actions
-
-**Key files:**
-- `src/gateway/server.impl.ts` - Main gateway server implementation
-- `src/gateway/server-methods/` - WebSocket RPC method handlers
-- `src/gateway/protocol/` - Protocol schemas and types
-
-### 2. Channels
-
-Channels are the messaging integrations. Each channel:
-- Connects to a specific messaging platform
-- Receives inbound messages
-- Sends outbound replies
-- Handles platform-specific features (reactions, threads, media)
-
-**Supported channels:**
-- **WhatsApp** (`src/whatsapp/`) - via Baileys library
-- **Telegram** (`src/telegram/`) - via grammY library
-- **Slack** (`src/slack/`) - via Bolt SDK
-- **Discord** (`src/discord/`) - via discord.js
-- **Signal** (`src/signal/`) - via signal-cli
-- **iMessage** (`src/imessage/`) - macOS only
-- **Extension channels** (`extensions/`) - MS Teams, Matrix, Zalo, etc.
-
-**Key files:**
-- `src/channels/plugins/` - Channel plugin system
-- `src/channels/registry.ts` - Channel registration
-
-### 3. Agent Runtime (Pi Agent)
-
-The agent runtime executes the AI assistant logic:
-
-- **Session management** - Loads/saves conversation history
-- **System prompt assembly** - Builds context from workspace, skills, bootstrap files
-- **Model inference** - Calls the LLM (Anthropic Claude, OpenAI, etc.)
-- **Tool execution** - Runs tools when the model requests them
-- **Streaming** - Emits partial responses for real-time feedback
-
-**Key files:**
-- `src/agents/pi-embedded-runner/run.ts` - Main agent execution loop
-- `src/commands/agent.ts` - Agent command entry point
-- `src/agents/tools/` - Built-in tool implementations
-
-### 4. Sessions
-
-Sessions track conversation state:
-- **Session keys** identify conversations (e.g., `agent:default:main`, `agent:default:telegram:group:123`)
-- **Session store** (`~/.clawdbot/agents/<agentId>/sessions/sessions.json`) persists metadata
-- **Transcripts** (`*.jsonl`) store full conversation history
-
-**Session scoping:**
-- DMs can be scoped to `main` (shared), `per-peer`, or `per-channel-peer`
-- Groups/channels get isolated sessions
-- Identity links can unify users across channels
-
-### 5. Tools
-
-Tools extend the agent's capabilities:
-
-| Tool | Description | Location |
-|------|-------------|----------|
-| `bash` | Execute shell commands | Built into pi-agent-core |
-| `browser` | Control Chromium browser | `src/agents/tools/browser-tool.ts` |
-| `canvas` | Agent-controlled visual workspace | `src/agents/tools/canvas-tool.ts` |
-| `cron` | Schedule recurring tasks | `src/agents/tools/cron-tool.ts` |
-| `message_send` | Send messages to channels | `src/agents/tools/message-tool.ts` |
-| `web_fetch` | Fetch web pages | `src/agents/tools/web-fetch.ts` |
-| `web_search` | Search the web | `src/agents/tools/web-search.ts` |
-| `memory_*` | Persistent memory operations | `src/agents/tools/memory-tool.ts` |
-| `sessions_*` | Cross-session communication | `src/agents/tools/sessions-*.ts` |
-| `nodes_*` | Control connected devices | `src/agents/tools/nodes-tool.ts` |
-
-### 6. Skills
-
-Skills are modular capabilities loaded from the workspace:
-- **Bundled skills** - Shipped with Moltbot
-- **Managed skills** - Downloaded from ClawdHub registry
-- **Workspace skills** - User-created in `~/clawd/skills/`
-
-Skills inject tools and prompts into the agent context.
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Gateway** | `src/gateway/` | WebSocket server, message routing, RPC methods |
+| **Agent Runtime** | `src/agents/` | LLM calls, tool execution, session management |
+| **Channels** | `src/telegram/`, `src/discord/`, etc. | Platform-specific messaging integrations |
+| **Tools** | `src/agents/tools/` | Browser, cron, message, nodes, web, etc. |
+| **Sessions** | `src/config/sessions.ts` | Conversation state persistence |
 
 ---
 
-## End-to-End Example: WhatsApp Message Processing
+## The Agent Runtime
 
-Let's trace what happens when you send "What's the weather in NYC?" via WhatsApp:
+Moltbot uses **`@mariozechner/pi-agent-core`** as the underlying agent runtime.
 
-### Step 1: Message Arrival (WhatsApp → Gateway)
-
-```
-User sends WhatsApp message: "What's the weather in NYC?"
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  WhatsApp Client (Baileys)          │
-│  src/whatsapp/                      │
-│                                     │
-│  1. Receives message via WebSocket  │
-│  2. Extracts sender, text, media    │
-│  3. Validates allowlist             │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
-```
-
-**Code path:** The Baileys library (WhatsApp Web protocol) receives the message and triggers a handler in `src/whatsapp/` or the channel plugin system.
-
-### Step 2: Inbound Processing
+### Agent Stack
 
 ```
-┌─────────────────────────────────────┐
-│  Channel Handler                    │
-│                                     │
-│  1. Normalize message context       │
-│  2. Check DM/group policy           │
-│  3. Handle pairing if needed        │
-│  4. Route to agent                  │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  @mariozechner/pi-agent-core     ← Core agent loop + tool execution  │
+├─────────────────────────────────────────────────────────────────────┤
+│  @mariozechner/pi-coding-agent   ← Session management + coding tools │
+├─────────────────────────────────────────────────────────────────────┤
+│  @mariozechner/pi-ai             ← LLM provider abstraction          │
+├─────────────────────────────────────────────────────────────────────┤
+│  Moltbot Tools + Integration Layer                                   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-The channel handler:
-1. Creates a `MsgContext` with normalized fields (`Body`, `From`, `To`, `ChatType`, etc.)
-2. Checks if the sender is allowed (`allowFrom` config)
-3. If pairing is required, sends a pairing code instead of processing
-4. Otherwise, routes to the agent runtime
-
-**Key type (from `src/auto-reply/templating.ts`):**
-```typescript
-type MsgContext = {
-  Body?: string;
-  From?: string;
-  To?: string;
-  SessionKey?: string;
-  AccountId?: string;
-  ChatType?: string;
-  Provider?: string;
-  // ... more fields
-}
-```
-
-### Step 3: Session Resolution
+### The Agent Loop
 
 ```
-┌─────────────────────────────────────┐
-│  Session Manager                    │
-│  src/config/sessions.ts             │
-│                                     │
-│  1. Resolve session key             │
-│     → "agent:default:main"          │
-│  2. Load or create session entry    │
-│  3. Load JSONL transcript           │
-│  4. Check reset conditions          │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
+1. QUEUE REQUEST
+   └─ Serialize per-session (prevent race conditions)
+
+2. RESOLVE AUTH
+   └─ Get API key from auth profiles (OAuth, API key, etc.)
+
+3. BUILD SYSTEM PROMPT
+   └─ Identity + Skills + Context Files + Runtime Info + Tool Summaries
+
+4. LOAD SESSION
+   └─ Read JSONL transcript (conversation history)
+
+5. CALL LLM
+   └─ Stream tokens, emit "assistant" events
+
+6. HANDLE TOOL CALLS
+   └─ If model requests tool → execute → return result → loop
+
+7. FINALIZE
+   └─ Save transcript, update session, emit "lifecycle:end"
 ```
 
-**Session key resolution:**
-- DM messages typically go to `agent:default:main` (shared session)
-- Group messages go to `agent:default:whatsapp:group:<groupId>`
-- The session store tracks metadata like `sessionId`, `thinkingLevel`, `lastChannel`
+### System Prompt Components
 
-### Step 4: Agent Execution
+The system prompt is built dynamically and includes:
 
-```
-┌─────────────────────────────────────┐
-│  Agent Command                      │
-│  src/commands/agent.ts              │
-│                                     │
-│  1. Validate parameters             │
-│  2. Resolve model (claude-opus-4-5) │
-│  3. Load skills snapshot            │
-│  4. Call runEmbeddedPiAgent()       │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
-```
+| Section | Content |
+|---------|---------|
+| **Identity** | "You are Moltbot, a personal AI assistant" |
+| **Runtime Info** | Host, OS, model, channel, sandbox status |
+| **Tool Summaries** | List of available tools with descriptions |
+| **Skills** | Available skills from workspace |
+| **Context Files** | AGENTS.md, SOUL.md, USER.md, TOOLS.md |
+| **Messaging** | How to send messages across channels |
+| **Memory** | How to use memory_search/memory_get |
 
-**Code:** `src/commands/agent.ts` orchestrates the agent run:
-```typescript
-const result = await runWithModelFallback({
-  cfg,
-  provider,
-  model,
-  run: (providerOverride, modelOverride) => {
-    return runEmbeddedPiAgent({
-      sessionId,
-      sessionKey,
-      prompt: body,
-      provider: providerOverride,
-      model: modelOverride,
-      thinkLevel: resolvedThinkLevel,
-      // ...
-    });
-  },
-});
-```
+### Context Files (Workspace)
 
-### Step 5: Pi Agent Runtime
-
-```
-┌─────────────────────────────────────┐
-│  Pi Agent Runtime                   │
-│  src/agents/pi-embedded-runner/     │
-│                                     │
-│  1. Queue in session lane           │
-│  2. Resolve auth profile            │
-│  3. Build system prompt             │
-│  4. Load message history            │
-│  5. Call LLM API                    │
-│  6. Stream response                 │
-│  7. Execute tools if requested      │
-│  8. Save transcript                 │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
-```
-
-**The embedded Pi agent:**
-1. **Queues the run** - Serializes requests per session to prevent races
-2. **Resolves auth** - Gets API key from profiles (OAuth, API key, etc.)
-3. **Builds system prompt** - Combines base prompt + skills + bootstrap files + workspace context
-4. **Loads history** - Reads previous turns from JSONL transcript
-5. **Calls LLM** - Sends request to Anthropic/OpenAI/etc.
-6. **Streams** - Emits `assistant` events as tokens arrive
-7. **Handles tools** - If model calls a tool, executes it and loops
-8. **Persists** - Appends user message and assistant response to JSONL
-
-### Step 6: Tool Execution (if needed)
-
-If the model decides to use a tool (e.g., `web_fetch` to get weather):
-
-```
-┌─────────────────────────────────────┐
-│  Tool Execution                     │
-│  src/agents/tools/                  │
-│                                     │
-│  Model response:                    │
-│  {                                  │
-│    "tool": "web_fetch",             │
-│    "args": {                        │
-│      "url": "https://wttr.in/NYC"   │
-│    }                                │
-│  }                                  │
-│                                     │
-│  1. Validate tool access            │
-│  2. Execute tool function           │
-│  3. Return result to model          │
-│  4. Model generates final response  │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
-```
-
-**Tool result flows back to the model, which generates the final response.**
-
-### Step 7: Response Delivery
-
-```
-┌─────────────────────────────────────┐
-│  Outbound Delivery                  │
-│  src/commands/agent/delivery.ts     │
-│                                     │
-│  1. Chunk long messages             │
-│  2. Format for channel (markdown)   │
-│  3. Send via WhatsApp client        │
-└─────────────────┬───────────────────┘
-                  │
-                  ▼
-
-User receives: "The weather in NYC is currently 45°F and partly cloudy..."
-```
-
-The response is:
-1. **Chunked** if needed (WhatsApp has message length limits)
-2. **Formatted** for the channel (markdown support varies)
-3. **Sent** via the originating channel's outbound adapter
-
-### Step 8: Event Broadcasting
-
-Throughout this process, the Gateway broadcasts events to connected clients:
-
-```typescript
-// Events emitted during agent run
-broadcast("agent", { runId, stream: "lifecycle", data: { phase: "start" } });
-broadcast("agent", { runId, stream: "assistant", data: { delta: "The weather..." } });
-broadcast("agent", { runId, stream: "tool", data: { name: "web_fetch", status: "start" } });
-broadcast("agent", { runId, stream: "lifecycle", data: { phase: "end" } });
-```
-
-The **macOS app**, **WebChat**, and other clients receive these events to show real-time progress.
+| File | Purpose |
+|------|---------|
+| `AGENTS.md` | Workspace rules, conventions, behavior guidelines |
+| `SOUL.md` | Personality, values, identity |
+| `USER.md` | Information about the user |
+| `TOOLS.md` | Local tool notes (SSH hosts, camera names, etc.) |
+| `MEMORY.md` | Long-term curated memory |
+| `memory/*.md` | Daily notes and logs |
 
 ---
 
-## Configuration
+## Tools Available
 
-Moltbot configuration lives in `~/.clawdbot/moltbot.json`:
+### Core Tools (from pi-coding-agent)
 
-```json5
+| Tool | Description |
+|------|-------------|
+| `read` | Read file contents |
+| `write` | Create or overwrite files |
+| `edit` | Make precise edits to files |
+| `apply_patch` | Apply multi-file patches |
+| `grep` | Search file contents |
+| `find` | Find files by pattern |
+| `ls` | List directory contents |
+| `exec` | Run shell commands (with PTY support) |
+| `process` | Manage background processes |
+
+### Moltbot Tools
+
+| Tool | Description |
+|------|-------------|
+| `browser` | CDP browser automation |
+| `canvas` | Visual workspace control |
+| `web_search` | Web search (Brave API) |
+| `web_fetch` | Fetch & extract web content |
+| `message` | Send to any messaging channel |
+| `sessions_list` | List active sessions |
+| `sessions_history` | Get session transcript |
+| `sessions_send` | Cross-session messaging |
+| `sessions_spawn` | Create subagents |
+| `nodes` | Device control (camera, screen, notify) |
+| `cron` | Schedule jobs and reminders |
+| `gateway` | Restart, update Moltbot |
+| `image` | Analyze images with vision |
+| `tts` | Text-to-speech (ElevenLabs) |
+| `memory_search` | Search memory files |
+| `memory_get` | Get memory content |
+
+---
+
+## Can It Build Software?
+
+**Yes.** Moltbot has full software development capabilities:
+
+### What It Can Do
+
+```bash
+# File operations
+read("/path/to/file")
+write("/path/to/file", content)
+edit("/path/to/file", old, new)
+
+# Shell commands (anything you could run)
+exec("git clone https://github.com/...")
+exec("npm install && npm run build")
+exec("docker compose up -d")
+exec("python train_model.py")
+
+# Browser automation
+browser.open("https://example.com")
+browser.click("#submit")
+browser.fill("input[name=email]", "test@example.com")
+```
+
+### Coding Agent Integration
+
+Moltbot can orchestrate other coding agents:
+
+```bash
+# Run Codex CLI
+bash pty:true command:"codex exec --full-auto 'Build a REST API'"
+
+# Run Claude Code
+bash pty:true command:"claude 'Refactor the auth module'"
+
+# Parallel issue fixing with git worktrees
+git worktree add -b fix/issue-78 /tmp/issue-78 main
+bash pty:true workdir:/tmp/issue-78 background:true command:"codex --yolo 'Fix issue #78'"
+```
+
+---
+
+## Security Model
+
+### Default: Full Trust for Your DMs
+
+```
+Main session (your direct chats) → Full host access
+Groups/channels → Can be sandboxed
+```
+
+### Security Layers
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Layer 1: WHO CAN TALK TO IT                                    │
+│  • DM pairing (strangers get pairing code)                      │
+│  • Allowlists per channel                                       │
+│  • Group mention requirements                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 2: WHAT TOOLS ARE AVAILABLE                              │
+│  • Tool policy (allow/deny lists)                               │
+│  • Tool profiles: minimal, coding, messaging, full              │
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 3: WHERE CODE RUNS                                       │
+│  • Sandbox mode (Docker container)                              │
+│  • Gateway host (your machine)                                  │
+│  • Node (companion device)                                      │
+├─────────────────────────────────────────────────────────────────┤
+│  Layer 4: EXEC APPROVALS                                        │
+│  • deny: block all host commands                                │
+│  • allowlist: only pre-approved commands                        │
+│  • ask: prompt before running                                   │
+│  • full: allow everything                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Sandbox Configuration
+
+```json
 {
-  // Model configuration
-  agent: {
-    model: "anthropic/claude-opus-4-5"
-  },
-  
-  // Channel configuration
-  channels: {
-    whatsapp: {
-      allowFrom: ["+1234567890"],
-      groups: { "*": { requireMention: true } }
-    },
-    telegram: {
-      botToken: "123456:ABCDEF",
-      allowFrom: ["@username"]
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "non-main"  // Sandbox everything except your DMs
+      }
     }
-  },
-  
-  // Gateway settings
-  gateway: {
-    port: 18789,
-    bind: "loopback"
-  },
-  
-  // Session settings
-  session: {
-    dmScope: "main",
-    reset: { daily: "04:00" }
   }
 }
+```
+
+---
+
+## Autonomous Capabilities
+
+Moltbot can act without being asked:
+
+### 1. Heartbeat (Periodic Check-ins)
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "heartbeat": {
+        "enabled": true,
+        "every": "10m",
+        "prompt": "Check system events and pending tasks."
+      }
+    }
+  }
+}
+```
+
+### 2. Cron Jobs (Scheduled Tasks)
+
+```bash
+# Morning briefing every day at 7am
+moltbot cron add \
+  --name "Morning status" \
+  --cron "0 7 * * *" \
+  --message "Summarize inbox + calendar" \
+  --deliver --channel whatsapp --to "+15551234567"
+
+# One-shot reminder
+moltbot cron add --name "Reminder" --at "20m" \
+  --system-event "Call the dentist!" --wake now
+```
+
+### 3. Webhooks (External Triggers)
+
+```bash
+# External systems can trigger Moltbot
+curl -X POST http://127.0.0.1:18789/hooks/wake \
+  -H 'Authorization: Bearer SECRET' \
+  -d '{"text":"New email from boss","mode":"now"}'
+```
+
+### 4. Voice Wake
+
+```json
+{ "triggers": ["clawd", "claude", "hey assistant"] }
+```
+
+### Autonomy Summary
+
+| Feature | Trigger | What It Does |
+|---------|---------|--------------|
+| **Heartbeat** | Timer (e.g., every 10m) | Check events, proactive alerts |
+| **Cron** | Schedule (cron/at/every) | Run any task, deliver anywhere |
+| **Webhooks** | External HTTP call | React to email, CI, etc. |
+| **Voice Wake** | Wake word spoken | Activate and listen |
+| **Background Monitor** | Process completion | Notify when tasks finish |
+
+---
+
+## How It Differs From Other Agents
+
+### Moltbot vs Terminal Agents (Codex, Claude Code)
+
+| Aspect | Terminal Agent | Moltbot |
+|--------|---------------|---------|
+| **Lifecycle** | Starts → runs → exits | Always running (daemon) |
+| **Interface** | Terminal only | Any messaging app |
+| **Access** | At computer only | From anywhere (phone) |
+| **Session** | Lost when closed | Persistent across days |
+| **Proactive** | No | Yes (cron, heartbeat) |
+
+### Moltbot vs Cloud Agents (ChatGPT, Claude.ai)
+
+| Aspect | Cloud Agent | Moltbot |
+|--------|-------------|---------|
+| **Data** | Their servers | Your machine |
+| **File access** | ❌ | ✅ Full filesystem |
+| **Run code** | ❌ | ✅ Any command |
+| **Device control** | ❌ | ✅ Mac, iOS, Android |
+| **Custom integrations** | ❌ | ✅ Anything |
+| **Cost** | Monthly subscription | Pay per token |
+
+### Moltbot vs Computer Use Agents (Anthropic Computer Use, Manus)
+
+| Aspect | Computer Use | Moltbot |
+|--------|--------------|---------|
+| **Control method** | Screen + mouse (vision) | Direct APIs, CLI, browser CDP |
+| **Speed** | Slow (screenshot → think → act) | Fast (direct calls) |
+| **Reliability** | Fragile (UI changes break it) | Robust (APIs are stable) |
+| **Interface** | Their desktop app | Any messaging app |
+| **Autonomous** | ❌ | ✅ (cron, webhooks) |
+| **Remote access** | ❌ | ✅ (phone, anywhere) |
+
+### Category Definition
+
+**Moltbot is NOT a computer use agent.** It's an:
+
+> **OS-level AI agent with remote channels and autonomy**
+
+- **OS-Level**: Direct filesystem, shell, process, network access
+- **Remote Channels**: WhatsApp, Telegram, Slack, Discord, Voice, Web, CLI
+- **Autonomy**: Cron, heartbeat, webhooks, background monitoring
+
+---
+
+## End-to-End Example
+
+### WhatsApp Message: "What's the weather in NYC?"
+
+```
+Step 1: MESSAGE ARRIVAL
+        User sends WhatsApp message
+        ↓
+        Baileys library receives via WebSocket
+        ↓
+        Channel handler validates allowlist
+
+Step 2: SESSION RESOLUTION
+        Resolve session key → "agent:default:main"
+        Load conversation history from JSONL
+        Check reset conditions
+
+Step 3: AGENT EXECUTION
+        agentCommand() orchestrates the run
+        ↓
+        runEmbeddedPiAgent({
+          sessionId, sessionKey,
+          prompt: "What's the weather in NYC?",
+          provider: "anthropic",
+          model: "claude-opus-4-5"
+        })
+
+Step 4: PI AGENT RUNTIME
+        Queue in session lane
+        Build system prompt
+        Load history
+        Call LLM API
+        Stream response
+
+Step 5: TOOL EXECUTION (if needed)
+        Model decides: { "tool": "web_fetch", "args": { "url": "https://wttr.in/NYC" } }
+        ↓
+        Execute tool
+        Return result to model
+        Model generates final response
+
+Step 6: RESPONSE DELIVERY
+        Chunk if needed (WhatsApp limits)
+        Format for channel
+        Send via Baileys
+        ↓
+        User receives: "The weather in NYC is 45°F and partly cloudy..."
+
+Step 7: EVENT BROADCASTING
+        broadcast("agent", { stream: "lifecycle", phase: "end" })
+        ↓
+        macOS app, WebChat, etc. update in real-time
 ```
 
 ---
@@ -400,55 +476,93 @@ Moltbot configuration lives in `~/.clawdbot/moltbot.json`:
 |-----------|---------|
 | `src/gateway/` | WebSocket server, RPC methods, protocol |
 | `src/agents/` | Agent runtime, tools, skills, model auth |
-| `src/auto-reply/` | Message processing, commands, templating |
-| `src/channels/` | Channel plugin system, routing |
-| `src/telegram/`, `src/discord/`, etc. | Channel-specific implementations |
-| `src/cli/` | CLI command wiring |
-| `src/commands/` | Command implementations |
-| `src/config/` | Configuration loading and validation |
-| `src/infra/` | Infrastructure utilities |
+| `src/agents/tools/` | Tool implementations |
+| `src/agents/pi-embedded-runner/` | Core agent loop |
+| `src/auto-reply/` | Message processing, commands |
+| `src/channels/` | Channel plugin system |
+| `src/telegram/`, `src/discord/`, etc. | Channel implementations |
+| `src/config/` | Configuration loading |
+| `src/cron/` | Scheduled jobs |
+| `src/infra/` | Heartbeat, webhooks, utilities |
 | `apps/macos/` | macOS menu bar app |
 | `apps/ios/`, `apps/android/` | Mobile companion apps |
-| `extensions/` | Channel plugins (MS Teams, Matrix, etc.) |
+| `extensions/` | Plugin channels (MS Teams, Matrix, etc.) |
 
 ---
 
-## CLI Commands
+## Can I Build This Myself?
 
-Quick reference for common operations:
+**Yes, in principle.** Moltbot is:
 
-```bash
-# Start the gateway
-moltbot gateway --port 18789 --verbose
-
-# Send a message to the agent
-moltbot agent --message "Hello, Clawd!"
-
-# Check channel status
-moltbot channels status --probe
-
-# Run the onboarding wizard
-moltbot onboard --install-daemon
-
-# Check system health
-moltbot doctor
 ```
+Codex/Claude Code (shell access)
+    + WhatsApp/Telegram/Slack API wrappers
+    + Cron daemon
+    + Webhook server
+    + Session persistence
+    + Message routing
+    + Security model
+    + Edge case handling
+    + ~2 years of integration work
+```
+
+The value is in the **integration, polish, and features** - not unique magic.
+
+### What You'd Build
+
+```python
+# Pseudocode for DIY Moltbot
+whatsapp = Baileys()
+telegram = Grammy()
+slack = Bolt()
+
+def on_message(channel, sender, text):
+    session = load_session(sender)
+    response = codex.run(text, context=session)
+    save_session(sender, response)
+    send_reply(channel, sender, response)
+
+schedule.every(10).minutes.do(heartbeat)
+
+@app.post("/webhook")
+def webhook(payload):
+    codex.run(f"Handle: {payload}")
+```
+
+Then spend 6-12 months handling edge cases. 😅
 
 ---
 
 ## Summary
 
-Moltbot works by:
+| Question | Answer |
+|----------|--------|
+| **What is Moltbot?** | OS-level AI agent with remote channels and autonomy |
+| **Can it build software?** | Yes - full filesystem, shell, browser access |
+| **Can it use the computer freely?** | Yes, with configurable security controls |
+| **Can it act on its own?** | Yes - cron, heartbeat, webhooks |
+| **How does it differ from terminal agents?** | Always-on, multi-channel, remote access, persistent sessions |
+| **Is it like a cloud agent on your machine?** | Yes - same convenience, self-hosted control |
+| **Is it a computer use agent?** | No - OS-level access (APIs), not screen control (vision) |
+| **What agent runtime does it use?** | `@mariozechner/pi-agent-core` |
+| **What tools does it have?** | read, write, edit, exec, browser, message, cron, nodes, web_*, sessions_*, etc. |
 
-1. **Gateway** maintains connections to messaging channels and exposes a WebSocket API
-2. **Channels** receive messages and route them to the agent
-3. **Sessions** track conversation state per user/group
-4. **Agent runtime** calls the LLM with context, history, and tools
-5. **Tools** extend agent capabilities (bash, browser, web, etc.)
-6. **Responses** are delivered back through the originating channel
+---
 
-The architecture is designed to be:
-- **Local-first** - Runs on your own devices
-- **Multi-channel** - One assistant, many messaging surfaces
-- **Extensible** - Plugins, skills, and hooks
-- **Secure** - Pairing, allowlists, and sandboxing options
+## Quick Start
+
+```bash
+# Install
+npm install -g moltbot@latest
+
+# Onboard (wizard walks you through setup)
+moltbot onboard --install-daemon
+
+# Start gateway
+moltbot gateway --port 18789 --verbose
+
+# Send a message
+moltbot agent --message "Hello, Moltbot!"
+```
+
+For full documentation: [https://docs.molt.bot](https://docs.molt.bot)
